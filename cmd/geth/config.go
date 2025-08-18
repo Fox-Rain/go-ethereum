@@ -14,6 +14,26 @@
 // You should have received a copy of the GNU General Public License
 // along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
 
+// TODO: 환경 구성자 역할		사용자가 입력한 명령어/플래그/옵션들을 바탕으로 실제 작동할 node.Node 객체 생성
+
+/*
+	TODO: TOML 이란 ?
+			설정파일을 위한 단순하고 명확한 문법의 구성 파일 포멧이다.
+			cli 명령어 플래그 같은 것이 아닌 설정을 위해서 넣는 파일로 Geth --config 플래그를 통해서 TOML파일 설정을 읽는다.
+
+			* CLI플래그나 TOML설정파일이나 최종적으로는 같은 구조체 getConfig로 파싱된다.
+			  그리고 이 getCOnfig에 맞춰서 Node객체가 생성되는 것
+
+
+
+
+	config.go
+
+	default config -> toml -> flg등을 거쳐서 config 구조체를 만듦
+	그 config 구조체를 바탕으로 makenode  노드까지 생성하는 기능을 담고 있다.
+	근데 그 기능관련된 엔진은 node에 직점 정의되는 듯
+*/
+
 package main
 
 import (
@@ -49,6 +69,7 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
+// cli command & flg 선언
 var (
 	dumpConfigCommand = &cli.Command{
 		Action:      dumpConfig,
@@ -67,6 +88,7 @@ var (
 )
 
 // These settings ensure that TOML keys use the same names as Go struct fields.
+// toml.Config 구조체  	toml파일을 어떤방식으로 파싱할지 함수 선택
 var tomlSettings = toml.Config{
 	NormFieldName: func(rt reflect.Type, key string) string {
 		return key
@@ -88,6 +110,7 @@ var tomlSettings = toml.Config{
 	},
 }
 
+// 더이상 사용되지 않는 TOML 설정 항목들을 나열한 것			설정파일에 이런항목이 있다면 무시한다.
 var deprecatedConfigFields = map[string]bool{
 	"ethconfig.Config.EVMInterpreter":          true,
 	"ethconfig.Config.EWASMInterpreter":        true,
@@ -101,10 +124,12 @@ var deprecatedConfigFields = map[string]bool{
 	"ethconfig.Config.LightNoSyncServe":        true,
 }
 
+// EthStats 서버 url 관련 구조체
 type ethstatsConfig struct {
 	URL string `toml:",omitempty"`
 }
 
+// Geth의 전체 설정을 담는 통합 구조체
 type gethConfig struct {
 	Eth      ethconfig.Config
 	Node     node.Config
@@ -112,6 +137,7 @@ type gethConfig struct {
 	Metrics  metrics.Config
 }
 
+// file 경로의 TOML파일을 읽고 gethConfig 구조체를 채우는 함수
 func loadConfig(file string, cfg *gethConfig) error {
 	f, err := os.Open(file)
 	if err != nil {
@@ -127,6 +153,9 @@ func loadConfig(file string, cfg *gethConfig) error {
 	return err
 }
 
+
+
+// geth노드를 위한 default config 구조체를 리턴하는 함수
 func defaultNodeConfig() node.Config {
 	git, _ := version.VCS()
 	cfg := node.DefaultConfig
@@ -138,51 +167,62 @@ func defaultNodeConfig() node.Config {
 	return cfg
 }
 
+
+
 // loadBaseConfig loads the gethConfig based on the given command line
 // parameters and config file.
+
+// default config + TOML file + CLI flg를 합쳐서 하나의 gethConfig파일을 만드는 함수
 func loadBaseConfig(ctx *cli.Context) gethConfig {
-	// Load defaults.
+	// Load defaults. 	1.기본적으로 일단 설정
 	cfg := gethConfig{
 		Eth:     ethconfig.Defaults,
 		Node:    defaultNodeConfig(),
 		Metrics: metrics.DefaultConfig,
 	}
 
-	// Load config file.
+	// Load config file.  2.TOML file (==config file)을 덮어 씌움
 	if file := ctx.String(configFileFlag.Name); file != "" {
 		if err := loadConfig(file, &cfg); err != nil {
 			utils.Fatalf("%v", err)
 		}
 	}
 
-	// Apply flags.
+	// Apply flags.		3.cli flg로 명령인자받았으면 그걸로 또 덮어씌움
 	utils.SetNodeConfig(ctx, &cfg.Node)
 	return cfg
 }
 
+
+
 // makeConfigNode loads geth configuration and creates a blank node instance.
+// TODO: Geth에서 노드를 생성하고 그 위에 account/eth/metric 설정을 적용하는 초기화 함수
 func makeConfigNode(ctx *cli.Context) (*node.Node, gethConfig) {
-	cfg := loadBaseConfig(ctx)
-	stack, err := node.New(&cfg.Node)
+	cfg := loadBaseConfig(ctx)			// config함수를 완성하고 cfg에 저장
+	stack, err := node.New(&cfg.Node)	// cfg.node 설정에 맞게 geth 노드 객체를 생성
 	if err != nil {
 		utils.Fatalf("Failed to create the protocol stack: %v", err)
 	}
 	// Node doesn't by default populate account manager backends
+	// 지갑등을 등록하는 과정
 	if err := setAccountManagerBackends(stack.Config(), stack.AccountManager(), stack.KeyStoreDir()); err != nil {
 		utils.Fatalf("Failed to set account manager backends: %v", err)
 	}
 
-	utils.SetEthConfig(ctx, stack, &cfg.Eth)
-	if ctx.IsSet(utils.EthStatsURLFlag.Name) {
+	utils.SetEthConfig(ctx, stack, &cfg.Eth)	// cfg.eth 설정을 노드에 반영
+	if ctx.IsSet(utils.EthStatsURLFlag.Name) {	// ethstats 플래그 있다면 그것도 반영
 		cfg.Ethstats.URL = ctx.String(utils.EthStatsURLFlag.Name)
 	}
-	applyMetricConfig(ctx, &cfg)
+	applyMetricConfig(ctx, &cfg)		// cfg.metric 설정을 반영
 
 	return stack, cfg
 }
 
+
+
 // constructs the disclaimer text block which will be printed in the logs upon
 // startup when Geth is running in dev mode.
+// 개발자모드로 geth를 실행했을떄 로그로 출력되는 배너 문자열을 생성하는 함수
 func constructDevModeBanner(ctx *cli.Context, cfg gethConfig) string {
 	devModeBanner := `You are running Geth in --dev mode. Please note the following:
 
@@ -220,9 +260,14 @@ func constructDevModeBanner(ctx *cli.Context, cfg gethConfig) string {
 	return devModeBanner
 }
 
+
+
 // makeFullNode loads geth configuration and creates the Ethereum backend.
+// TODO: makeFullNode	설정 config에 맞게 노드를 생성하고 여러추가적인 설정을한 뒤 그 노드를 리턴하는 함수
 func makeFullNode(ctx *cli.Context) *node.Node {
-	stack, cfg := makeConfigNode(ctx)
+	stack, cfg := makeConfigNode(ctx)			// cfg config로드 + 그 설정에 맞는 노드 객체 생성
+	
+	// 특정 테스트넷 osaka verkle 수동 설정
 	if ctx.IsSet(utils.OverrideOsaka.Name) {
 		v := ctx.Uint64(utils.OverrideOsaka.Name)
 		cfg.Eth.OverrideOsaka = &v
@@ -232,12 +277,13 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 		cfg.Eth.OverrideVerkle = &v
 	}
 
-	// Start metrics export if enabled
+	// Start metrics export if enabled		메트릭 서버 설정
 	utils.SetupMetrics(&cfg.Metrics)
 
-	backend, eth := utils.RegisterEthService(stack, &cfg.Eth)
+	backend, eth := utils.RegisterEthService(stack, &cfg.Eth)	// ethereum 서비스 등록
 
 	// Create gauge with geth system and build information
+	// geth/info 메트릭 등록
 	if eth != nil { // The 'eth' backend may be nil in light mode
 		var protos []string
 		for _, p := range eth.Protocols() {
@@ -251,18 +297,18 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 		})
 	}
 
-	// Configure log filter RPC API.
+	// Configure log filter RPC API.	RPC API의 필터 등록
 	filterSystem := utils.RegisterFilterAPI(stack, backend, &cfg.Eth)
 
-	// Configure GraphQL if requested.
+	// Configure GraphQL if requested.		GraphQL 기능 설정 optional
 	if ctx.IsSet(utils.GraphQLEnabledFlag.Name) {
 		utils.RegisterGraphQLService(stack, backend, filterSystem, &cfg.Node)
 	}
-	// Add the Ethereum Stats daemon if requested.
+	// Add the Ethereum Stats daemon if requested.	EthStats 서버 등록
 	if cfg.Ethstats.URL != "" {
 		utils.RegisterEthStatsService(stack, backend, cfg.Ethstats.URL)
 	}
-	// Configure synchronization override service
+	// Configure synchronization override service   동기화 대상 강제 설정 (테스트용)
 	var synctarget common.Hash
 	if ctx.IsSet(utils.SyncTargetFlag.Name) {
 		hex := hexutil.MustDecode(ctx.String(utils.SyncTargetFlag.Name))
@@ -273,6 +319,7 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 	}
 	utils.RegisterSyncOverrideService(stack, eth, synctarget, ctx.Bool(utils.ExitWhenSyncedFlag.Name))
 
+	// dev/beacon/catalyst mode 중 결정
 	if ctx.IsSet(utils.DeveloperFlag.Name) {
 		// Start dev mode.
 		simBeacon, err := catalyst.NewSimulatedBeacon(ctx.Uint64(utils.DeveloperPeriodFlag.Name), cfg.Eth.Miner.PendingFeeRecipient, eth)
@@ -300,10 +347,13 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 			utils.Fatalf("failed to register catalyst service: %v", err)
 		}
 	}
-	return stack
+	return stack	// 마지막으로 생성 노드를 리턴함
 }
 
+
+
 // dumpConfig is the dumpconfig command.
+// geth dumpconfig 커맨드 실행시 호출되는 함수로	현재의 설정 상태 gethConfig를 TOML로 출력 또는 저장하는 기능
 func dumpConfig(ctx *cli.Context) error {
 	_, cfg := makeConfigNode(ctx)
 	comment := ""
@@ -332,6 +382,10 @@ func dumpConfig(ctx *cli.Context) error {
 	return nil
 }
 
+
+
+
+// geth실행시 사용자가 CLI 명령어로 입력한 플래그들을 gethConfig에 반영하는 역할을 한다.
 func applyMetricConfig(ctx *cli.Context, cfg *gethConfig) {
 	if ctx.IsSet(utils.MetricsEnabledFlag.Name) {
 		cfg.Metrics.Enabled = ctx.Bool(utils.MetricsEnabledFlag.Name)
@@ -398,6 +452,9 @@ func applyMetricConfig(ctx *cli.Context, cfg *gethConfig) {
 	}
 }
 
+
+
+// geth 노드가 실행될 떄 지갑관련 백엔드들을 등록하는 설정 함수
 func setAccountManagerBackends(conf *node.Config, am *accounts.Manager, keydir string) error {
 	scryptN := keystore.StandardScryptN
 	scryptP := keystore.StandardScryptP
