@@ -15,6 +15,16 @@
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
 // Package core implements the Ethereum consensus protocol.
+
+/*
+	TODO: 블록체인 데이터베이스를 직접 다루고, 체인 재구성과 같은 복잡한 로직을 처리하는 블록체인 데이터베이스 총괄 관리자 역할의 파일
+
+
+
+
+
+*/
+
 package core
 
 import (
@@ -58,7 +68,10 @@ import (
 	"github.com/ethereum/go-ethereum/triedb/pathdb"
 )
 
+// Geth노드 성능/상태 측정용 변수 +  ERROR 객체 변수들 선언
 var (
+
+	// Geth 노드의 성능과 상태를 실시간으로 모니터링하기 위한 측정 변수들
 	headBlockGauge          = metrics.NewRegisteredGauge("chain/head/block", nil)
 	headHeaderGauge         = metrics.NewRegisteredGauge("chain/head/header", nil)
 	headFastBlockGauge      = metrics.NewRegisteredGauge("chain/head/receipt", nil)
@@ -108,21 +121,26 @@ var (
 	blockPrefetchTxsInvalidMeter = metrics.NewRegisteredMeter("chain/prefetch/txs/invalid", nil)
 	blockPrefetchTxsValidMeter   = metrics.NewRegisteredMeter("chain/prefetch/txs/valid", nil)
 
+
+	// 여러 ERROR 객체들
 	errInsertionInterrupted = errors.New("insertion is interrupted")
 	errChainStopped         = errors.New("blockchain is stopped")
 	errInvalidOldChain      = errors.New("invalid old chain")
 	errInvalidNewChain      = errors.New("invalid new chain")
 )
 
+// 시간간격 변수 (3분)
 var (
 	forkReadyInterval = 3 * time.Minute
 )
 
+// TODO: 성능 최적화를 위한 Cache 크기, 데이터베이스의 구조 호환성을 관리하기 위한 버전 번호를 정의하는 상수들
+//		 여기서의 캐싱은 하드웨어에 대한 캐시를 의미하는 것이 아니라 주 메모리 일부를 캐시처럼 사용
 const (
-	bodyCacheLimit     = 256
-	blockCacheLimit    = 256
-	receiptsCacheLimit = 32
-	txLookupCacheLimit = 1024
+	bodyCacheLimit     = 256		// 최대로 캐싱할 트랜잭션 목록 수
+	blockCacheLimit    = 256		// 최대로 캐싱할 블록 수
+	receiptsCacheLimit = 32			// 트랜잭션 receipt의 쵀대 캐싱할 수
+	txLookupCacheLimit = 1024		// 특정 트랜잭션이 어떤 블록에 포함되어있는지 빠르게 찾기 위한 조회정보 (lock up)을 최대 몇개까지 캐싱할지
 
 	// BlockChainVersion ensures that an incompatible database forces a resync from scratch.
 	//
@@ -156,10 +174,18 @@ const (
 	//  The following incompatible database changes were added:
 	//  * Total difficulty has been removed from both the key-value store and the ancient store.
 	//  * The metadata structure of freezer is changed by adding 'flushOffset'
-	BlockChainVersion uint64 = 9
+	BlockChainVersion uint64 = 9	// TODO: Geth가 사용하는 블록체인 DB  내부구조의 버전을 나타낸다.
 )
 
+
+
+
+
+
+
+
 // BlockChainConfig contains the configuration of the BlockChain object.
+// TODO: Blockchain 객체를 생성하는데에 사용하는 모든 설정값 구조체
 type BlockChainConfig struct {
 	// Trie database related options
 	TrieCleanLimit       int           // Memory allowance (MB) to use for caching trie nodes in memory
@@ -195,8 +221,20 @@ type BlockChainConfig struct {
 	TxLookupLimit int64
 }
 
+
+
+
+/*
+	TODO: 아래의 BlockchainConfig 관련된 함수들은 모두 "Builder Pattern"을 따라서 구현된다.
+		  (체이닝을 통해서 객체의 멤버변수들을 초기화할 수 있도록)
+
+		EX) DefaultConfig().WithArchive(true).WithStateScheme("test_scheme"). .... 
+*/
+
+
 // DefaultConfig returns the default config.
 // Note the returned object is safe to modify!
+// default BLockchainConfig 객체를 리턴하는 함수
 func DefaultConfig() *BlockChainConfig {
 	return &BlockChainConfig{
 		TrieCleanLimit:   256,
@@ -212,25 +250,37 @@ func DefaultConfig() *BlockChainConfig {
 	}
 }
 
+
 // WithArchive enables/disables archive mode on the config.
+// BlockchainConfig 객체의 Archive Mode를 켜거나 끄는 helper 함수		*Archive Mode는 지금까지의 모든 데이터를 저장하는 모드 (full node)
 func (cfg BlockChainConfig) WithArchive(on bool) *BlockChainConfig {
 	cfg.ArchiveMode = on
 	return &cfg
 }
 
+
 // WithStateScheme sets the state storage scheme on the config.
+// BlockchainConfig 객체의 state 데이터를 어떤 규칙으로 DB에 저장할지 지정하는 helper 함수
 func (cfg BlockChainConfig) WithStateScheme(scheme string) *BlockChainConfig {
 	cfg.StateScheme = scheme
 	return &cfg
 }
 
+
 // WithNoAsyncFlush enables/disables asynchronous buffer flushing mode on the config.
+// BlochainConfig 객체에서 Trie데이터의 비동기 디스크 쓰기 기능을 켜거나 끄는 helper 함수 
 func (cfg BlockChainConfig) WithNoAsyncFlush(on bool) *BlockChainConfig {
 	cfg.TrieNoAsyncFlush = on
 	return &cfg
 }
 
+
+
+
+
+
 // triedbConfig derives the configures for trie database.
+// TODO: BlockchainConfig라는 범용 설정 객체를 => 실제 Trie DB를 초기화하는데 필요한 구체적잉ㄴ triedb.Config 객체로 변환하는 함수
 func (cfg *BlockChainConfig) triedbConfig(isVerkle bool) *triedb.Config {
 	config := &triedb.Config{
 		Preimages: cfg.Preimages,
@@ -259,12 +309,22 @@ func (cfg *BlockChainConfig) triedbConfig(isVerkle bool) *triedb.Config {
 	return config
 }
 
+
+
+
+
+
+
+
+
 // txLookup is wrapper over transaction lookup along with the corresponding
 // transaction object.
+// TODO: txLookup 		특정 tx의 조회정보와 실제tx를 하나로 몪어주는 구조체
 type txLookup struct {
-	lookup      *rawdb.LegacyTxLookupEntry
-	transaction *types.Transaction
+	lookup      *rawdb.LegacyTxLookupEntry		// tx의 위치정보 : 해당 트랜잭션의 Block number, Block hash, Transaction index 같은 메타데이터가 들어있다.
+	transaction *types.Transaction				// tx의 실제정보 : tx의 모든 내용을 포함한 객체
 }
+
 
 // BlockChain represents the canonical chain given a database with a genesis
 // block. The Blockchain manages chain imports, reverts, chain reorganisations.
@@ -280,20 +340,28 @@ type txLookup struct {
 // important to note that GetBlock can return any block and does not need to be
 // included in the canonical one where as GetBlockByNumber always represents the
 // canonical chain.
+
+// TODO: Blockchain Structure 		모든 데이터관리, 새로운 블록 검증, 체인 유지하는 모든 구성요소를 담고 있는 구조체
+// TODO: 설정&DB,	이벤트를 알리기 위한 통신채널,	 체인의 상태를 가르키는 포인터 (헤더등을 가르킴),  성능 최적화를 위한 캐시,	 합의, 형식검증, 상태변경등의 역할을 하는 엔진등이 포함되어 있다.
+// TODO: 구조는 일반적으로 Blockchain가 상위모듈, 그 하위의 합의, 검증과 관련된 하위 모듈을 갖는 구조이다. (이런 하위모듈의 인터페이스를 갖고있음)
 type BlockChain struct {
-	chainConfig *params.ChainConfig // Chain & network configuration
-	cfg         *BlockChainConfig   // Blockchain configuration
 
-	db            ethdb.Database                   // Low level persistent database to store final content in
-	snaps         *snapshot.Tree                   // Snapshot tree for fast trie leaf access
-	triegc        *prque.Prque[int64, common.Hash] // Priority queue mapping block numbers to tries to gc
-	gcproc        time.Duration                    // Accumulates canonical block processing for trie dumping
-	lastWrite     uint64                           // Last block when the state was flushed
+	// TODO: 설정 및 DB
+	chainConfig *params.ChainConfig // Chain & network configuration	합의규칙
+	cfg         *BlockChainConfig   // Blockchain configuration			노드 운영과 관련된 설정
+
+	db            ethdb.Database                   // low level DB 핸들		block, receipt 등 최종 데이터가 저장
+	snaps         *snapshot.Tree                   // Snapshot tree for fast trie leaf access	스냅샷 데이터 관리 객체
+	triegc        *prque.Prque[int64, common.Hash] // Priority queue mapping block numbers to tries to gc	오래된 상태 데이터를 삭제하기 위한 우선순위 큐
+	gcproc        time.Duration                    // Accumulates canonical block processing for trie dumping	
+	lastWrite     uint64                           // Last block when the state was flushed			
 	flushInterval atomic.Int64                     // Time interval (processing time) after which to flush a state
-	triedb        *triedb.Database                 // The database handler for maintaining trie nodes.
-	statedb       *state.CachingDB                 // State database to reuse between imports (contains state cache)
-	txIndexer     *txIndexer                       // Transaction indexer, might be nil if not enabled
+	triedb        *triedb.Database                 // The database handler for maintaining trie nodes.			머클 패트리샤 트라이 노드를 저장하고 관리하는 DB
+	statedb       *state.CachingDB                 // State database to reuse between imports (contains state cache)	상태 DB (여러 블록을 처리하는 동안 계정정보를 메모리에 캐싱하는 역할)
+	txIndexer     *txIndexer                       // Transaction indexer, might be nil if not enabled			tx hash로 tx를 빠르게 찾을 수 있도록 돕는 인덱서
 
+
+	// TODO: Blockchain 내부나 외부의 다른 모듈에게 중요한 이벤트를 알리기 위한 통신 채널 (체인 재구성, 새 블록, 최신 블록 변경 등..)
 	hc               *HeaderChain
 	rmLogsFeed       event.Feed
 	chainFeed        event.Feed
@@ -304,17 +372,20 @@ type BlockChain struct {
 	scope            event.SubscriptionScope
 	genesisBlock     *types.Block
 
+
 	// This mutex synchronizes chain write operations.
 	// Readers don't need to take it, they can just read the database.
+	// TODO: 체인 상태 포인터  (블록체인의 현재 상태가 아디인지 체크하는 역할)
 	chainmu *syncx.ClosableMutex
 
-	currentBlock      atomic.Pointer[types.Header] // Current head of the chain
-	currentSnapBlock  atomic.Pointer[types.Header] // Current head of snap-sync
-	currentFinalBlock atomic.Pointer[types.Header] // Latest (consensus) finalized block
-	currentSafeBlock  atomic.Pointer[types.Header] // Latest (consensus) safe block
-	historyPrunePoint atomic.Pointer[history.PrunePoint]
+	currentBlock      atomic.Pointer[types.Header] // Current head of the chain		정식체인의 최신블록 헤더를 가르킨다.
+	currentSnapBlock  atomic.Pointer[types.Header] // Current head of snap-sync		스냅샷 동기화중일때 현재까지 동기화된 최신블록 헤더
+	currentFinalBlock atomic.Pointer[types.Header] // Latest (consensus) finalized block	pos합의에 따라 최종확정된 블록 헤더
+	currentSafeBlock  atomic.Pointer[types.Header] // Latest (consensus) safe block			pos합의에 따라 안전하다고 간주되는 블록 헤더
+	historyPrunePoint atomic.Pointer[history.PrunePoint]	// 가지치기 기준점   *이 이전으로는 데이터가 삭제됬을 수 있음을 알려줌
 
-	bodyCache     *lru.Cache[common.Hash, *types.Body]
+	// TODO: 성능 최적화를 위한 LRU Cache	(block body, receipt, block, txloopup 등의 정보를 저장하는 캐시)
+	bodyCache     *lru.Cache[common.Hash, *types.Body]	
 	bodyRLPCache  *lru.Cache[common.Hash, rlp.RawValue]
 	receiptsCache *lru.Cache[common.Hash, []*types.Receipt] // Receipts cache with all fields derived
 	blockCache    *lru.Cache[common.Hash, *types.Block]
@@ -325,34 +396,42 @@ type BlockChain struct {
 	stopping      atomic.Bool // false if chain is running, true when stopped
 	procInterrupt atomic.Bool // interrupt signaler for block processing
 
-	engine     consensus.Engine
-	validator  Validator // Block and state validator interface
-	prefetcher Prefetcher
-	processor  Processor // Block transaction processor interface
+
+	// TODO: 핵심로직 & 인터페이스
+	engine     consensus.Engine		// 합의 엔진
+	validator  Validator // Block and state validator interface		블록의 구조와 내용이 규칙에 맞는지 검증하는 역할
+	prefetcher statePrefetcher
+	processor  Processor // Block transaction processor interface	블록에 포함된 모든 tx를 순차적으로 실행하여서 상태를 변경하는 역할
 	logger     *tracing.Hooks
 
 	lastForkReadyAlert time.Time // Last time there was a fork readiness print out
 }
 
+
+
 // NewBlockChain returns a fully initialised block chain using information
 // available in the database. It initialises the default Ethereum Validator
 // and Processor.
+// TODO: Blokchain 객체를 생성하는 함수
+// TODO: DB핸들러 생성, 객체 변수 초기화, 제네시스블록 등록, 체인상태 로딩 및 자동 복구
 func NewBlockChain(db ethdb.Database, genesis *Genesis, engine consensus.Engine, cfg *BlockChainConfig) (*BlockChain, error) {
+	
 	if cfg == nil {
 		cfg = DefaultConfig()
 	}
-
 	// Open trie database with provided config
 	enableVerkle, err := EnableVerkleAtGenesis(db, genesis)
 	if err != nil {
 		return nil, err
 	}
-	triedb := triedb.NewDatabase(db, cfg.triedbConfig(enableVerkle))
+
+	triedb := triedb.NewDatabase(db, cfg.triedbConfig(enableVerkle)) // TODO: config를 바탕으로 state를 저장하는 merkle patricia tree를 관리할 DB handler를 생성
 
 	// Write the supplied genesis to the database if it has not been initialized
 	// yet. The corresponding chain config will be returned, either from the
 	// provided genesis or from the locally stored configuration if the genesis
 	// has already been initialized.
+	// TODO: genesis block 처리 (등록) + 체인정보 출력
 	chainConfig, genesisHash, compatErr, err := SetupGenesisBlockWithOverride(db, triedb, genesis, cfg.Overrides)
 	if err != nil {
 		return nil, err
@@ -365,6 +444,8 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, engine consensus.Engine,
 	log.Info(strings.Repeat("-", 153))
 	log.Info("")
 
+
+	// TODO: Blockchain 객체 기본 생성 및 초기화
 	bc := &BlockChain{
 		chainConfig:   chainConfig,
 		cfg:           cfg,
@@ -380,6 +461,7 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, engine consensus.Engine,
 		engine:        engine,
 		logger:        cfg.VmConfig.Tracer,
 	}
+
 	bc.hc, err = NewHeaderChain(db, chainConfig, engine, bc.insertStopped)
 	if err != nil {
 		return nil, err
@@ -410,6 +492,8 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, engine consensus.Engine,
 	if bc.empty() {
 		rawdb.InitDatabaseFromFreezer(bc.db)
 	}
+
+	// TODO: 체인 상태 로딩 및 자동 복구
 	// Load blockchain states from disk
 	if err := bc.loadLastState(); err != nil {
 		return nil, err
@@ -486,6 +570,9 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, engine consensus.Engine,
 			}
 		}
 	}
+
+
+	// TODO: 최종 준비 및 반환
 	// The first thing the node will do is reconstruct the verification data for
 	// the head block (ethash cache or clique voting snapshot). Might as well do
 	// it in advance.
@@ -526,13 +613,19 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, engine consensus.Engine,
 	return bc, nil
 }
 
+
+
+// TODO: 스냅샷 동기화에 사용되는 스냅샷 트리를 초기화하고 설정 + Blockchain 구조체에 할당하는 역할
 func (bc *BlockChain) setupSnapshot() {
 	// Short circuit if the chain is established with path scheme, as the
 	// state snapshot has been integrated into path database natively.
+	// 현재 노드가 pathScheme를 사용한다면 그냥 즉시 종료  *PathScheme는 snapshot기능이 DB에 이미 존재하므로 필요없기에
 	if bc.cfg.StateScheme == rawdb.PathScheme {
 		return
 	}
+
 	// Load any existing snapshot, regenerating it if loading failed
+	// 스냅샷 동기화 허용 여부체크 + 복구모드 확인 뒤에 스냅샷객체를 생성해서 블록체인 구조체에 할당
 	if bc.cfg.SnapshotLimit > 0 {
 		// If the chain was rewound past the snapshot persistent layer (causing
 		// a recovery block number to be persisted to disk), check if we're still
@@ -544,6 +637,7 @@ func (bc *BlockChain) setupSnapshot() {
 			log.Warn("Enabling snapshot recovery", "chainhead", head.Number, "diskbase", *layer)
 			recover = true
 		}
+		// snapshot 객체 생성 + 그 객체를 Blockchain 객체에 할당
 		snapconfig := snapshot.Config{
 			CacheSize:  bc.cfg.SnapshotLimit,
 			Recovery:   recover,
@@ -553,41 +647,54 @@ func (bc *BlockChain) setupSnapshot() {
 		bc.snaps, _ = snapshot.New(snapconfig, bc.db, bc.triedb, head.Root)
 
 		// Re-initialize the state database with snapshot
+		// state DB 재초기화
 		bc.statedb = state.NewDatabase(bc.triedb, bc.snaps)
 	}
 }
+
+
 
 // empty returns an indicator whether the blockchain is empty.
 // Note, it's a special case that we connect a non-empty ancient
 // database with an empty node, so that we can plugin the ancient
 // into node seamlessly.
+
+//블록체인 DB가 비어있는지 (genesis block only)인지 확인하는 함수
 func (bc *BlockChain) empty() bool {
-	genesis := bc.genesisBlock.Hash()
+	genesis := bc.genesisBlock.Hash()	// genesis block's hash
 	for _, hash := range []common.Hash{rawdb.ReadHeadBlockHash(bc.db), rawdb.ReadHeadHeaderHash(bc.db), rawdb.ReadHeadFastBlockHash(bc.db)} {
 		if hash != genesis {
-			return false
+			return false  
 		}
 	}
 	return true
 }
 
+
+
 // loadLastState loads the last known chain state from the database. This method
 // assumes that the chain manager mutex is held.
+
+// TODO: Geth노드가 다시 시작될떄, 디스크에 저장된 마지막 블록체인 상태를 읽어와 메모리에 올리는 함수
+// TODO: DB에 있는 최신블록 해시, 헤더, 블록 전체를 가져오고 관련된 변수등을 모두 갱신한다.
+// TODO: 여기서 판단하는 것은 이 데이터가 깨졌는지만 판단한다. 전체적으로 최신상태인지는 상관하지 않음
 func (bc *BlockChain) loadLastState() error {
 	// Restore the last known head block
-	head := rawdb.ReadHeadBlockHash(bc.db)
-	if head == (common.Hash{}) {
+	head := rawdb.ReadHeadBlockHash(bc.db)				// TODO: DB에서 최신블록의 해시를 읽어온다.
+	if head == (common.Hash{}) {						// 만약 해시가 비어있다면 손상된 것으로 간주하고, 체인을 제네시스상태로 리셋
 		// Corrupt or empty database, init from scratch
 		log.Warn("Empty database, resetting chain")
 		return bc.Reset()
 	}
-	headHeader := bc.GetHeaderByHash(head)
-	if headHeader == nil {
+	headHeader := bc.GetHeaderByHash(head)				// TODO: 읽어온 해시로 해당 블록의 헤더를 가져온다.
+	if headHeader == nil {								// 해시가 없다면 역시 손상된것으로 간주 제네시스상태로 초기화
 		// Corrupt or empty database, init from scratch
 		log.Warn("Head header missing, resetting chain", "hash", head)
 		return bc.Reset()
 	}
 
+
+	// TODO: 트랜잭션 목록도 포함된 전체 블록 데이터를 가져온다.  마찬가지로 블록 못가져온다면 제네시스로 리셋
 	var headBlock *types.Block
 	if cmp := headHeader.Number.Cmp(new(big.Int)); cmp == 1 {
 		// Make sure the entire head block is available.
@@ -603,11 +710,14 @@ func (bc *BlockChain) loadLastState() error {
 		log.Warn("Head block missing, resetting chain", "hash", head)
 		return bc.Reset()
 	}
+
 	// Everything seems to be fine, set as the head block
+	// TODO: 모든 검증을 통과하면 이 헤더를 최신블록으로 메모리에 설정
 	bc.currentBlock.Store(headHeader)
-	headBlockGauge.Update(int64(headBlock.NumberU64()))
+	headBlockGauge.Update(int64(headBlock.NumberU64()))	// 모니터링을 위한 최신블록 번호 메트릭도 업데이트
 
 	// Restore the last known head header
+	// TODO: 헤더체인의 최신 헤더 해시를 읽어오고 읽어온 헤더를 헤더체인의 현재 헤더로 설정
 	if head := rawdb.ReadHeadHeaderHash(bc.db); head != (common.Hash{}) {
 		if header := bc.GetHeaderByHash(head); header != nil {
 			headHeader = header
@@ -616,12 +726,14 @@ func (bc *BlockChain) loadLastState() error {
 	bc.hc.SetCurrentHeader(headHeader)
 
 	// Initialize history pruning.
+	// TODO: 로드한 최신 블록 번호 기준으로 가지치기를 결정하는 메커니즘을 초기화
 	latest := max(headBlock.NumberU64(), headHeader.Number.Uint64())
 	if err := bc.initializeHistoryPruning(latest); err != nil {
 		return err
 	}
 
 	// Restore the last known head snap block
+	// TODO: 최신 스냅 블록 포인터를 갱신
 	bc.currentSnapBlock.Store(headBlock.Header())
 	headFastBlockGauge.Update(int64(headBlock.NumberU64()))
 
@@ -635,6 +747,7 @@ func (bc *BlockChain) loadLastState() error {
 	// Restore the last known finalized block and safe block
 	// Note: the safe block is not stored on disk and it is set to the last
 	// known finalized block on startup
+	// TODO: DB에서 마지막으로 최종 확정된 블록해시를 읽어온다. 읽어온것을 최종확정블록과 안전한 블록 포인터에 모두 설정
 	if head := rawdb.ReadFinalizedBlockHash(bc.db); head != (common.Hash{}) {
 		if block := bc.GetBlockByHash(head); block != nil {
 			bc.currentFinalBlock.Store(block.Header())
@@ -645,6 +758,7 @@ func (bc *BlockChain) loadLastState() error {
 	}
 
 	// Issue a status log for the user
+	// TODO: 상태로그 출력
 	var (
 		currentSnapBlock  = bc.CurrentSnapBlock()
 		currentFinalBlock = bc.CurrentFinalBlock()
@@ -668,12 +782,16 @@ func (bc *BlockChain) loadLastState() error {
 	return nil
 }
 
-// initializeHistoryPruning sets bc.historyPrunePoint.
-func (bc *BlockChain) initializeHistoryPruning(latest uint64) error {
-	freezerTail, _ := bc.db.Tail()
 
+
+// initializeHistoryPruning sets bc.historyPrunePoint.
+// TODO: config에 맞는 블록 히스토리 보존 정책에 맞추어 노드의 "가지치기 기준점"을 초기화하고 유효성을 검사하는 함수 (NewBlockChain 생성자에서 호출된다.) 가지치기를 수행하진 않음
+func (bc *BlockChain) initializeHistoryPruning(latest uint64) error {
+	freezerTail, _ := bc.db.Tail()		// TODO: Freezer DB를확인하여서 가장 오래된 블럭번호를 가져온다.
+
+	// TODO: chainHistoryMode에 따라 분기 처리한다.
 	switch bc.cfg.ChainHistoryMode {
-	case history.KeepAll:
+	case history.KeepAll:		// 모든 히스토리 보존 모드  (정상적일 경우 freezeTail == 0)
 		if freezerTail == 0 {
 			return nil
 		}
@@ -687,7 +805,7 @@ func (bc *BlockChain) initializeHistoryPruning(latest uint64) error {
 		bc.historyPrunePoint.Store(predefinedPoint)
 		return nil
 
-	case history.KeepPostMerge:
+	case history.KeepPostMerge:		// 머지 이후 데이터만 보존 모드 
 		if freezerTail == 0 && latest != 0 {
 			// This is the case where a user is trying to run with --history.chain
 			// postmerge directly on an existing DB. We could just trigger the pruning
@@ -713,9 +831,12 @@ func (bc *BlockChain) initializeHistoryPruning(latest uint64) error {
 	}
 }
 
+
+
 // SetHead rewinds the local chain to a new head. Depending on whether the node
 // was snap synced or full synced and in which state, the method will try to
 // delete minimal data from disk whilst retaining chain consistency.
+// TODO: 현재의 최신 블록을 사용자가 지정한 과거의 특정 블록 번호로 강제로 되돌리는 함수  (ex ) hardfork
 func (bc *BlockChain) SetHead(head uint64) error {
 	if _, err := bc.setHeadBeyondRoot(head, 0, common.Hash{}, false); err != nil {
 		return err
@@ -733,14 +854,19 @@ func (bc *BlockChain) SetHead(head uint64) error {
 			return fmt.Errorf("current block missing: #%d [%x..]", header.Number, header.Hash().Bytes()[:4])
 		}
 	}
-	bc.chainHeadFeed.Send(ChainHeadEvent{Header: header})
+	bc.chainHeadFeed.Send(ChainHeadEvent{Header: header})	// 상태변경을 다른 모듈들에게 알림
 	return nil
 }
+
+
+
+
 
 // SetHeadWithTimestamp rewinds the local chain to a new head that has at max
 // the given timestamp. Depending on whether the node was snap synced or full
 // synced and in which state, the method will try to delete minimal data from
 // disk whilst retaining chain consistency.
+// TODO: 지정된 타임스탬프의 블록 혹은 가장 그시간 이전에 최신 블록으로 체인을 강제로 되돌리는 함수
 func (bc *BlockChain) SetHeadWithTimestamp(timestamp uint64) error {
 	if _, err := bc.setHeadBeyondRoot(0, timestamp, common.Hash{}, false); err != nil {
 		return err
@@ -762,9 +888,14 @@ func (bc *BlockChain) SetHeadWithTimestamp(timestamp uint64) error {
 	return nil
 }
 
+
+
+
 // SetFinalized sets the finalized block.
+// TODO: 최종확정된 블록을 설정하고 기록하는 함수 (POS)    Blockchain.currentFinalBlocK 갱신 + 블록해시 DB에 저장
 func (bc *BlockChain) SetFinalized(header *types.Header) {
-	bc.currentFinalBlock.Store(header)
+	bc.currentFinalBlock.Store(header)	// blockchain 객체의 currentFinalBlock을 갱신
+	// block header가 유효하다면 확정블록의 해시를 DB에 저장, 유효하지않다면 윙에서 갱신한 것도 비우고 종료
 	if header != nil {
 		rawdb.WriteFinalizedBlockHash(bc.db, header.Hash())
 		headFinalizedBlockGauge.Update(int64(header.Number.Uint64()))
@@ -775,6 +906,7 @@ func (bc *BlockChain) SetFinalized(header *types.Header) {
 }
 
 // SetSafe sets the safe block.
+// TODO: 세이프 블록을 설정하고 기록하는 함수 (POS)	 Blockchain.currentSafeBlock
 func (bc *BlockChain) SetSafe(header *types.Header) {
 	bc.currentSafeBlock.Store(header)
 	if header != nil {
@@ -784,12 +916,15 @@ func (bc *BlockChain) SetSafe(header *types.Header) {
 	}
 }
 
+
+
 // rewindHashHead implements the logic of rewindHead in the context of hash scheme.
+// TODO: DB에서 불일치가 발생시, 블록체인을 되감아서 유효상태인 가장 최신 블록을 찾고 그것을 최신블록으로 갱신하는 함수
 func (bc *BlockChain) rewindHashHead(head *types.Header, root common.Hash) (*types.Header, uint64) {
 	var (
-		limit      uint64                             // The oldest block that will be searched for this rewinding
+		limit      uint64                             // 어디까지 되감을지 한계점
 		beyondRoot = root == common.Hash{}            // Flag whether we're beyond the requested root (no root, always true)
-		pivot      = rawdb.ReadLastPivotNumber(bc.db) // Associated block number of pivot point state
+		pivot      = rawdb.ReadLastPivotNumber(bc.db) // 스냅동기화 기준점
 		rootNumber uint64                             // Associated block number of requested root
 
 		start  = time.Now() // Timestamp the rewinding is restarted
@@ -807,11 +942,15 @@ func (bc *BlockChain) rewindHashHead(head *types.Header, root common.Hash) (*typ
 	//   might be not enough for a chain that is nearly empty. In the worst case,
 	//   the entire chain is reset to genesis, and snap sync is re-enabled on top,
 	//   which is still acceptable.
+
+	// 스냅동기화기록이 있다면 거기까지만 한계설정 (어차피 그 이후는 없기에), 풀동기화의 경우는 약9만블록
 	if pivot != nil {
 		limit = *pivot
 	} else if head.Number.Uint64() > params.FullImmutabilityThreshold {
 		limit = head.Number.Uint64() - params.FullImmutabilityThreshold
 	}
+
+
 	for {
 		logger := log.Trace
 		if time.Since(logged) > time.Second*8 {
@@ -826,12 +965,15 @@ func (bc *BlockChain) rewindHashHead(head *types.Header, root common.Hash) (*typ
 		}
 		// If search limit is reached, return the genesis block as the
 		// new chain head.
+		// TODO: 만약 한계지점까지도 유효한 상태를 찾지못하면 genesis block으로 리셋
 		if head.Number.Uint64() < limit {
 			log.Info("Rewinding limit reached, resetting to genesis", "number", head.Number, "hash", head.Hash(), "limit", limit)
 			return bc.genesisBlock.Header(), rootNumber
 		}
+
 		// If the associated state is not reachable, continue searching
 		// backwards until an available state is found.
+		// TODO: 유효성 상태 존재 여부 검사
 		if !bc.HasState(head.Root) {
 			// If the chain is gapped in the middle, return the genesis
 			// block as the new chain head.
@@ -851,6 +993,7 @@ func (bc *BlockChain) rewindHashHead(head *types.Header, root common.Hash) (*typ
 		}
 		// Once the available state is found, ensure that the requested root
 		// has already been crossed. If not, continue rewinding.
+		// TODO: 유효한 상태 발견시 이것을 최신블록으로 설정하고 리턴 후 종료
 		if beyondRoot || head.Number.Uint64() == 0 {
 			log.Info("Rewound to block with state", "number", head.Number, "hash", head.Hash())
 			return head, rootNumber
@@ -860,15 +1003,18 @@ func (bc *BlockChain) rewindHashHead(head *types.Header, root common.Hash) (*typ
 	}
 }
 
+
+
 // rewindPathHead implements the logic of rewindHead in the context of path scheme.
+// TODO: PathScheme DB 구조에서 블록체인을 뒤로 감아 유효한상태를 갖는 가장 최신 블록을 찾는 자동복구 함수
 func (bc *BlockChain) rewindPathHead(head *types.Header, root common.Hash) (*types.Header, uint64) {
 	var (
-		pivot      = rawdb.ReadLastPivotNumber(bc.db) // Associated block number of pivot block
-		rootNumber uint64                             // Associated block number of requested root
+		pivot      = rawdb.ReadLastPivotNumber(bc.db) // 스냅 동기화 기준점
+		rootNumber uint64                             // 찾고자하는 특정 상태 루트
 
 		// BeyondRoot represents whether the requested root is already
 		// crossed. The flag value is set to true if the root is empty.
-		beyondRoot = root == common.Hash{}
+		beyondRoot = root == common.Hash{}			// 루트를 지났는지 여부를 체크하는 변수
 
 		// noState represents if the target state requested for search
 		// is unavailable and impossible to be recovered.
@@ -935,6 +1081,8 @@ func (bc *BlockChain) rewindPathHead(head *types.Header, root common.Hash) (*typ
 	return head, rootNumber
 }
 
+
+
 // rewindHead searches the available states in the database and returns the associated
 // block as the new head block.
 //
@@ -943,12 +1091,18 @@ func (bc *BlockChain) rewindPathHead(head *types.Header, root common.Hash) (*typ
 // representing the state corresponding to snapshot disk layer, is deemed impassable,
 // then block number zero is returned, indicating that snapshot recovery is disabled
 // and the whole snapshot should be auto-generated in case of head mismatch.
+
+// TODO:  blockchain DB scheme에 따라 적절한 rewind 함수를 호출해주는 Dispatcher
+// TODO:  즉, 위의 rewindHashHead		rewindPathHead 함수 중 어떤 걸 호출할지 결정한다.
 func (bc *BlockChain) rewindHead(head *types.Header, root common.Hash) (*types.Header, uint64) {
 	if bc.triedb.Scheme() == rawdb.PathScheme {
 		return bc.rewindPathHead(head, root)
 	}
 	return bc.rewindHashHead(head, root)
 }
+
+
+
 
 // setHeadBeyondRoot rewinds the local chain to a new head with the extra condition
 // that the rewind must pass the specified state root. This method is meant to be
@@ -962,6 +1116,8 @@ func (bc *BlockChain) rewindHead(head *types.Header, root common.Hash) (*types.H
 // requested time. If both `head` and `time` is 0, the chain is rewound to genesis.
 //
 // The method returns the block number where the requested root cap was found.
+
+// TODO: 체인의 최신블록을 과거로 되돌리는 것을 넘어서, 모든 데이터 정합성을 맞추고 불필요한 데이터를 삭제하며 모든 상태를 업데이트하는 함수
 func (bc *BlockChain) setHeadBeyondRoot(head uint64, time uint64, root common.Hash, repair bool) (uint64, error) {
 	if !bc.chainmu.TryLock() {
 		return 0, errChainStopped
@@ -1090,8 +1246,11 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64, time uint64, root common.Ha
 	return rootNumber, bc.loadLastState()
 }
 
+
+
 // SnapSyncCommitHead sets the current head block to the one defined by the hash
 // irrelevant what the chain contents were prior.
+// TODO: snapshot sync가 완료된 후, 다운로드한 최신 블록을 현재 체인의 최신블록으로 지정하는 함수
 func (bc *BlockChain) SnapSyncCommitHead(hash common.Hash) error {
 	// Make sure that both the block as well at its state trie exists
 	block := bc.GetBlockByHash(hash)
@@ -1125,13 +1284,19 @@ func (bc *BlockChain) SnapSyncCommitHead(hash common.Hash) error {
 	return nil
 }
 
+
+
 // Reset purges the entire blockchain, restoring it to its genesis state.
+// TODO: 모든 데이터를 삭제하고, genesis block 상태로 초기화하는 함수
 func (bc *BlockChain) Reset() error {
-	return bc.ResetWithGenesisBlock(bc.genesisBlock)
+	return bc.ResetWithGenesisBlock(bc.genesisBlock)	// call ResetWithGenesisBlock
 }
+
+
 
 // ResetWithGenesisBlock purges the entire blockchain, restoring it to the
 // specified genesis state.
+// TODO: genesis block 상태로 돌리는 로직
 func (bc *BlockChain) ResetWithGenesisBlock(genesis *types.Block) error {
 	// Dump the entire block chain and purge the caches
 	if err := bc.SetHead(0); err != nil {
@@ -1163,12 +1328,18 @@ func (bc *BlockChain) ResetWithGenesisBlock(genesis *types.Block) error {
 	return bc.initializeHistoryPruning(0)
 }
 
+
+
 // Export writes the active chain to the given writer.
+// TODO: 전체 블록체인 데이터를 특정 출력 스트림으로 내보내는 함수
 func (bc *BlockChain) Export(w io.Writer) error {
 	return bc.ExportN(w, uint64(0), bc.CurrentBlock().Number.Uint64())
 }
 
+
+
 // ExportN writes a subset of the active chain to the given writer.
+// TODO: 블록체인의 지정된 범위만큼의 데이터를 특정 스트림에 내보내는 함수
 func (bc *BlockChain) ExportN(w io.Writer, first uint64, last uint64) error {
 	if first > last {
 		return fmt.Errorf("export failed: first (%d) is greater than last (%d)", first, last)
@@ -1200,12 +1371,15 @@ func (bc *BlockChain) ExportN(w io.Writer, first uint64, last uint64) error {
 	return nil
 }
 
+
+
 // writeHeadBlock injects a new head block into the current block chain. This method
 // assumes that the block is indeed a true head. It will also reset the head
 // header and the head snap sync block to this very same block if they are older
 // or if they are on a different side chain.
 //
 // Note, this function assumes that the `mu` mutex is held!
+// TODO: 새롭게 검증된 블록을 공식적인 최신블록 (head)로 저장하는 함수
 func (bc *BlockChain) writeHeadBlock(block *types.Block) {
 	// Add the block to the canonical chain number scheme and mark as the head
 	batch := bc.db.NewBatch()
@@ -1229,12 +1403,16 @@ func (bc *BlockChain) writeHeadBlock(block *types.Block) {
 	headBlockGauge.Update(int64(block.NumberU64()))
 }
 
+
+
+
 // stopWithoutSaving stops the blockchain service. If any imports are currently in progress
 // it will abort them using the procInterrupt. This method stops all running
 // goroutines, but does not do all the post-stop work of persisting data.
 // OBS! It is generally recommended to use the Stop method!
 // This method has been exposed to allow tests to stop the blockchain while simulating
 // a crash.
+// TODO: 정상적인 종료절차를 건너뛰고, 강제 중지시키는 함수
 func (bc *BlockChain) stopWithoutSaving() {
 	if !bc.stopping.CompareAndSwap(false, true) {
 		return
@@ -1258,12 +1436,16 @@ func (bc *BlockChain) stopWithoutSaving() {
 	bc.chainmu.Close()
 }
 
+
+
 // Stop stops the blockchain service. If any imports are currently in progress
 // it will abort them using the procInterrupt.
+// TODO: Blockchain service를 정상적이게 종료시키는 함수 ( + 디스크에 데이터 저장 + 자원 해제 후처리작업까지)
 func (bc *BlockChain) Stop() {
-	bc.stopWithoutSaving()
+	bc.stopWithoutSaving()	// 모든 작업 중지
 
 	// Ensure that the entirety of the state snapshot is journaled to disk.
+	// 최신 상태를 디스크에 저장 + 자원 해제 및 정리
 	var snapBase common.Hash
 	if bc.snaps != nil {
 		var err error
@@ -1321,29 +1503,36 @@ func (bc *BlockChain) Stop() {
 	log.Info("Blockchain stopped")
 }
 
+
+
 // InterruptInsert interrupts all insertion methods, causing them to return
 // errInsertionInterrupted as soon as possible, or resume the chain insertion
 // if required.
+// TODO: 블록 삽입 작업을 즉시 중단 or 재개하라고 신호를 보내는 스위치 함수
 func (bc *BlockChain) InterruptInsert(on bool) {
-	if on {
+	if on {									// on 인 경우 삽입을 즉시 중단
 		bc.procInterrupt.Store(true)
-	} else {
+	} else {								// off 인 경우 삽입으 재개
 		bc.procInterrupt.Store(false)
 	}
 }
 
+
 // insertStopped returns true after StopInsert has been called.
+// TODO: 블록삽입 작업이 현재 중단된 상태인지 확인하는 함수  	ture or false
 func (bc *BlockChain) insertStopped() bool {
 	return bc.procInterrupt.Load()
 }
+
+
 
 // WriteStatus status of write
 type WriteStatus byte
 
 const (
-	NonStatTy WriteStatus = iota
-	CanonStatTy
-	SideStatTy
+	NonStatTy WriteStatus = iota	// 상태없음을 의미
+	CanonStatTy						// 1 	정식상태를 의미
+	SideStatTy						// 2	사이드상태를 의미	 해당블록이 유효하긴하나, 일시적 포크로 인한 사이드체인에 속해있음을 의미한다.
 )
 
 // InsertReceiptChain inserts a batch of blocks along with their receipts into
@@ -1353,6 +1542,9 @@ const (
 //
 // The optional ancientLimit can also be specified and chain segment before that
 // will be directly stored in the ancient, getting rid of the chain migration.
+
+// TODO: Snap sync 전용으로 사용되는 블록 삽입 함수
+// TODO: 프로토콜을 통해 받은 블록과 영수중 데이터 묶음을 ancient와 최신 데이터로 나누어 freezer / LevelDB에 나누어 저장하는 역할을 한다.
 func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain []rlp.RawValue, ancientLimit uint64) (int, error) {
 	// Verify the supplied headers before insertion without lock
 	var headers []*types.Header
@@ -1537,37 +1729,53 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 	return 0, nil
 }
 
+
+
 // writeBlockWithoutState writes only the block and its metadata to the database,
 // but does not write any state. This is used to construct competing side forks
 // up to the point where they exceed the canonical total difficulty.
+// TODO: state를 건드리지 않고, 블록데이터 (header + body) + metaData를 DB에 저장하는 함수
+// TODO: 즉, 아직 체인에 정식적으로 포함될지 불확실한 블록을 "임시로 저장"하는 역할
+// TODO: cosmos SDK와 다르게 ethereum의 경우는 임시DB를 사용하지 않고 메인에 저장후, 필요없다면 취소하는 방식이다.
 func (bc *BlockChain) writeBlockWithoutState(block *types.Block) (err error) {
 	if bc.insertStopped() {
 		return errInsertionInterrupted
 	}
 	batch := bc.db.NewBatch()
-	rawdb.WriteBlock(batch, block)
+	rawdb.WriteBlock(batch, block)	// TODO: 입력으로 받은 block 객체를 DB에 기록 (단, 상태를 변경하는 작업은 제외함)
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to write block into disk", "err", err)
 	}
 	return nil
 }
 
+
+
 // writeKnownBlock updates the head block flag with a known block
 // and introduces chain reorg if necessary.
+// TODO: 새로운 블록을 블록체인의 최신 블록 (head)로 지정하는 역할을 하는 함수 (fork 발생하였다면 재구성까지 자동 )
 func (bc *BlockChain) writeKnownBlock(block *types.Block) error {
-	current := bc.CurrentBlock()
+	current := bc.CurrentBlock()	// 현재 노드가 가장 최신이라고 생각하는 블록을 가져온다.
+
+	// TODO: 새로 들어온 블록의 부모해시가 현재블록의 해시와 다른지 체크하고, 만약 같다면 그대로 확정 / 다르다면 fork가 발생한 것이므로 재구성 로직을 수행한다.
 	if block.ParentHash() != current.Hash() {
 		if err := bc.reorg(current, block.Header()); err != nil {
 			return err
 		}
 	}
-	bc.writeHeadBlock(block)
+	bc.writeHeadBlock(block)	// 최신블록으로 확정
 	return nil
 }
 
+
+
 // writeBlockWithState writes block, metadata and corresponding state data to the
 // database.
+// TODO: 완전히 검증된 블록과 그로 인한 상태 변경 내역 (RAM에 위치)을 모두 DB에 기록하는 함수
+// TODO: 블록 처리의 마지막 단계로 모든 계산이 끝난 결과를 디스크에 영구적으로 저장하는 역할
 func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.Receipt, statedb *state.StateDB) error {
+	
+	// TODO: 이 블록의 부모블록이 DB에 존재하는지 확인
 	if !bc.HasHeader(block.ParentHash(), block.NumberU64()-1) {
 		return consensus.ErrUnknownAncestor
 	}
@@ -1575,20 +1783,25 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	//
 	// Note all the components of block(hash->number map, header, body, receipts)
 	// should be written atomically. BlockBatch is used for containing all components.
-	blockBatch := bc.db.NewBatch()
+	// TODO: block, receipt, state를 batch에 추가하고 기록을 시작한다.
+	blockBatch := bc.db.NewBatch()	
 	rawdb.WriteBlock(blockBatch, block)
 	rawdb.WriteReceipts(blockBatch, block.Hash(), block.NumberU64(), receipts)
 	rawdb.WritePreimages(blockBatch, statedb.Preimages())
 	if err := blockBatch.Write(); err != nil {
 		log.Crit("Failed to write block into disk", "err", err)
 	}
+
 	// Commit all cached state changes into underlying memory database.
+	// TODO: RAM에만 저장되어있던 모든 상태 변경값을 내부DB에 최종적으로 확정하고 stateRoot 해시값으을 리턴한다.
 	root, err := statedb.Commit(block.NumberU64(), bc.chainConfig.IsEIP158(block.Number()), bc.chainConfig.IsCancun(block.Number(), block.Time()))
 	if err != nil {
 		return err
 	}
+
 	// If node is running in path mode, skip explicit gc operation
 	// which is unnecessary in this mode.
+	// HasScheme를 사용하는 구형의 노드에 대한 가비지 컬랙션과 디스크 플러시   * PathScheme의 경우 수행 x
 	if bc.triedb.Scheme() == rawdb.PathScheme {
 		return nil
 	}
@@ -1647,15 +1860,19 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	return nil
 }
 
+
 // writeBlockAndSetHead is the internal implementation of WriteBlockAndSetHead.
 // This function expects the chain mutex to be held.
+// TODO: 완전히 검증된 새로운 블록을 블록체인에 삽입하고, 이블록을 새로운 최신 블록 (head)로 확정하는 모든 과정을 총괄하는 함수
 func (bc *BlockChain) writeBlockAndSetHead(block *types.Block, receipts []*types.Receipt, logs []*types.Log, state *state.StateDB, emitHeadEvent bool) (status WriteStatus, err error) {
+	// TODO: 위의 함수 writeBlockWithState를 호출하여서 block,receipt, state 변경 내역을 모두 DB에 저장
 	if err := bc.writeBlockWithState(block, receipts, state); err != nil {
 		return NonStatTy, err
 	}
 	currentBlock := bc.CurrentBlock()
 
 	// Reorganise the chain if the parent is not the head block
+	// TODO: 체인재구성 검사 및 실행
 	if block.ParentHash() != currentBlock.Hash() {
 		if err := bc.reorg(currentBlock, block.Header()); err != nil {
 			return NonStatTy, err
@@ -1663,8 +1880,11 @@ func (bc *BlockChain) writeBlockAndSetHead(block *types.Block, receipts []*types
 	}
 
 	// Set new head.
+	// TODO: 최신블록 (Head) 업데이트
 	bc.writeHeadBlock(block)
 
+
+	// TODO: 이벤트 알림 전파 	새로운 블록 추가와 최신블록 변경등에 대한 이벤트를 발생시킨다.
 	bc.chainFeed.Send(ChainEvent{Header: block.Header()})
 	if len(logs) > 0 {
 		bc.logsFeed.Send(logs)
@@ -1680,10 +1900,17 @@ func (bc *BlockChain) writeBlockAndSetHead(block *types.Block, receipts []*types
 	return CanonStatTy, nil
 }
 
+
+
+
+
+
 // InsertChain attempts to insert the given batch of blocks in to the canonical
 // chain or, otherwise, create a fork. If an error is returned it will return
 // the index number of the failing block as well an error describing what went
 // wrong. After insertion is done, all accumulated events will be fired.
+// TODO: 외부에서 받은 블록 묶음을 검증한뒤, 정식체인에 삽입하거나 새로운 fork를 생성하는 함수
+// TODO: 블록처리의 첫 관문 함수로, 입력데이터의 유효성 확인 + 안전한 삽입을 시작하는 단계
 func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 	// Sanity check that we have something meaningful to import
 	if len(chain) == 0 {
@@ -1711,9 +1938,12 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 	}
 	defer bc.chainmu.Unlock()
 
+	// TODO: call insertChain
 	_, n, err := bc.insertChain(chain, true, false) // No witness collection for mass inserts (would get super large)
 	return n, err
 }
+
+
 
 // insertChain is the internal implementation of InsertChain, which assumes that
 // 1) chains are contiguous, and 2) The chain mutex is held.
@@ -1723,12 +1953,15 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 // racey behaviour. If a sidechain import is in progress, and the historic state
 // is imported, but then new canon-head is added before the actual sidechain
 // completes, then the historic state could be pruned again
+
+// TODO: 위의 InsertChain의 실제 핵심 구현체이다. 입력으로 받은 블록 묶음의 유효성을 검증하고, tx를 수행하며, DB에 저장하는 중심역할을 한다.
 func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool, makeWitness bool) (*stateless.Witness, int, error) {
 	// If the chain is terminating, don't even bother starting up.
 	if bc.insertStopped() {
 		return nil, 0, nil
 	}
 
+	// blockProcCounter라는 카운터를사용하여서 현재 몇개의 블록이 삽입중인지 추적합니다.
 	if atomic.AddInt32(&bc.blockProcCounter, 1) == 1 {
 		bc.blockProcFeed.Send(true)
 	}
@@ -1739,8 +1972,11 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool, makeWitness 
 	}()
 
 	// Start a parallel signature recovery (signer will fluke on fork transition, minimal perf loss)
+	// TODO: 블록에 포함된 tx를 서명을 병렬적으로 복구하는 작업 
 	SenderCacher().RecoverFromBlocks(types.MakeSigner(bc.chainConfig, chain[0].Number(), chain[0].Time()), chain)
+	
 
+	
 	var (
 		stats     = insertStats{startTime: mclock.Now()}
 		lastCanon *types.Block
@@ -1756,14 +1992,18 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool, makeWitness 
 	for i, block := range chain {
 		headers[i] = block.Header()
 	}
+
+	// TODO: 블록 헤더의 유효성 검사도 병렬적으로 실행하여서 속도를 높인다.
 	abort, results := bc.engine.VerifyHeaders(bc, headers)
 	defer close(abort)
 
 	// Peek the error for the first block to decide the directing import logic
+	// TODO: 입력으로 받은 블록 묶음을 순회하면서 유효성 검사 결과를 제공하는 이터레이터를 생성
 	it := newInsertIterator(chain, results, bc.validator)
 	block, err := it.next()
 
 	// Left-trim all the known blocks that don't need to build snapshot
+	// 기존블럭 건너뛰기
 	if bc.skipBlock(err, it) {
 		// First block (and state) is known
 		//   1. We did a roll-back, and should now do a re-import
@@ -1788,6 +2028,8 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool, makeWitness 
 		// When node runs a snap sync again, it can re-import a batch of known blocks via
 		// `insertChain` while a part of them have higher total difficulty than current
 		// head full block(new pivot point).
+
+		// TODO: 매안 블록처리 루프
 		for block != nil && bc.skipBlock(err, it) {
 			log.Debug("Writing previously known block", "number", block.Number(), "hash", block.Hash())
 			if err := bc.writeKnownBlock(block); err != nil {
@@ -1938,17 +2180,27 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool, makeWitness 
 	return witness, it.index, err
 }
 
+
+
+
+
+
+
 // blockProcessingResult is a summary of block processing
 // used for updating the stats.
+// TODO: 하나의 블록을 처리한 결과에 대한 요약정보를 담는 컨테이너		*노드의 성능 통계 업데이트 
 type blockProcessingResult struct {
-	usedGas  uint64
-	procTime time.Duration
-	status   WriteStatus
-	witness  *stateless.Witness
+	usedGas  uint64					// 소모된 총 가스량
+	procTime time.Duration			// 블록을 처리하는데 걸린 총 시간
+	status   WriteStatus			// 처리된 블록의 최종상태 *정식체인인지 사이드체인인지
+	witness  *stateless.Witness		// tx의 유효성을 검증하는데 사용할 수 있는 암호학적 증거에 대한 포인터
 }
+
+
 
 // processBlock executes and validates the given block. If there was no error
 // it writes the block and associated state to database.
+// TODO: 새로운 블록이 들어왔을 때, 해당블록의 모든 tx를 실행하고 결과를 검증한뒤, 최종적으로 DB에 기록하는 모든 과정을 총괄하는 핵심 함수
 func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, setHead bool, makeWitness bool) (_ *blockProcessingResult, blockEndErr error) {
 	var (
 		err       error
@@ -1958,6 +2210,7 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 	)
 	defer interrupt.Store(true) // terminate the prefetch at the end
 
+	// TODO: prefetching 여부 정하기 + stateDB 생성
 	if bc.cfg.NoPrefetch {
 		statedb, err = state.New(parentRoot, bc.statedb)
 		if err != nil {
@@ -2008,9 +2261,12 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 		}(time.Now(), throwaway, block)
 	}
 
+
+
 	// If we are past Byzantium, enable prefetching to pull in trie node paths
 	// while processing transactions. Before Byzantium the prefetcher is mostly
 	// useless due to the intermediate root hashing after each transaction.
+	// TODO: witness 생성 및 logger 설정
 	var witness *stateless.Witness
 	if bc.chainConfig.IsByzantium(block.Number()) {
 		// Generate witnesses either if we're self-testing, or if it's the
@@ -2039,9 +2295,12 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 		}()
 	}
 
+
 	// Process block using the parent state as reference point
+	// TODO: 블록 실행 및 상태검증 시작
 	pstart := time.Now()
-	res, err := bc.processor.Process(block, statedb, bc.cfg.VmConfig)
+	// TODO: processor 객체는 이 블록에 모든 tx를 EVM에서 순서대로 실행한다. 이 과정에서 메모리에 있는 stateDB가 갱신된다.
+	res, err := bc.processor.Process(block, statedb, bc.cfg.VmConfig)	
 	if err != nil {
 		bc.reportBlock(block, res, err)
 		return nil, err
@@ -2049,6 +2308,7 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 	ptime := time.Since(pstart)
 
 	vstart := time.Now()
+	// TODO: tx실행이 끝난뒤, 최종검증 수행  (processor가 만든 stateRoot, receiptsRootrk 블록헤더와 정확히 일치하는지 비교한다.)
 	if err := bc.validator.ValidateState(block, statedb, res, false); err != nil {
 		bc.reportBlock(block, res, err)
 		return nil, err
@@ -2105,6 +2365,7 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 	blockCrossValidationTimer.Update(xvtime)                                          // The time spent on stateless cross validation
 
 	// Write the block to the chain and get the status.
+	// TODO: DB에 최종적으로 기록
 	var (
 		wstart = time.Now()
 		status WriteStatus
@@ -2118,7 +2379,9 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 	if err != nil {
 		return nil, err
 	}
+
 	// Update the metrics touched during block commit
+	// TODO: 성능통계 기록 및 반환
 	accountCommitTimer.Update(statedb.AccountCommits)   // Account commits are complete, we can mark them
 	storageCommitTimer.Update(statedb.StorageCommits)   // Storage commits are complete, we can mark them
 	snapshotCommitTimer.Update(statedb.SnapshotCommits) // Snapshot commits are complete, we can mark them
@@ -2140,6 +2403,14 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 	}, nil
 }
 
+
+
+
+
+
+
+
+
 // insertSideChain is called when an import batch hits upon a pruned ancestor
 // error, which happens when a sidechain with a sufficiently old fork-block is
 // found.
@@ -2147,6 +2418,8 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 // The method writes all (header-and-body-valid) blocks to disk, then tries to
 // switch over to the new chain if the TD exceeded the current chain.
 // insertSideChain is only used pre-merge.
+// TODO: 오래된 블록에서 분기된 '사이트체인'을 처리하기위한 블록 삽입 함수
+// TODO: insertChain가 블록을 처리하다가, 특정블록의 부모에 대해 state를 찾을 수 없을때 이 함수가 호출된다.
 func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, makeWitness bool) (*stateless.Witness, int, error) {
 	var current = bc.CurrentBlock()
 
@@ -2247,10 +2520,13 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, ma
 	return nil, 0, nil
 }
 
+
+
 // recoverAncestors finds the closest ancestor with available state and re-execute
 // all the ancestor blocks since that.
 // recoverAncestors is only used post-merge.
 // We return the hash of the latest block that we could correctly validate.
+// TODO: 삭제된 과거기록 복구를 위해서 state가 없는 조상 블록을 순서대로 다시 실행하는 함수
 func (bc *BlockChain) recoverAncestors(block *types.Block, makeWitness bool) (common.Hash, error) {
 	// Gather all the sidechain hashes (full blocks may be memory heavy)
 	var (
@@ -2298,8 +2574,11 @@ func (bc *BlockChain) recoverAncestors(block *types.Block, makeWitness bool) (co
 	return block.Hash(), nil
 }
 
+
+
 // collectLogs collects the logs that were generated or removed during the
 // processing of a block. These logs are later announced as deleted or reborn.
+// TODO: 특정블록에 포함된 모든 tx이 실행되면서 생성된 eventlog를 수집하는 함수
 func (bc *BlockChain) collectLogs(b *types.Block, removed bool) []*types.Log {
 	var blobGasPrice *big.Int
 	if b.ExcessBlobGas() != nil {
@@ -2321,18 +2600,22 @@ func (bc *BlockChain) collectLogs(b *types.Block, removed bool) []*types.Log {
 	return logs
 }
 
+
+
 // reorg takes two blocks, an old chain and a new chain and will reconstruct the
 // blocks and inserts them to be part of the new canonical chain and accumulates
 // potential missing transactions and post an event about them.
 //
 // Note the new head block won't be processed here, callers need to handle it
 // externally.
+// TODO: 이더리움 노드가 fort를 해결하는 함수    현재보다 더 신뢰도 높은 체인이 나타냈을 때 수행되는 체인 재구성 작업
 func (bc *BlockChain) reorg(oldHead *types.Header, newHead *types.Header) error {
 	var (
 		newChain    []*types.Header
 		oldChain    []*types.Header
 		commonBlock *types.Header
 	)
+
 	// Reduce the longer chain to the same number as the shorter one
 	if oldHead.Number.Uint64() > newHead.Number.Uint64() {
 		// Old chain is longer, gather all transactions and logs as deleted ones
@@ -2506,11 +2789,15 @@ func (bc *BlockChain) reorg(oldHead *types.Header, newHead *types.Header) error 
 	return nil
 }
 
+
+
+
 // InsertBlockWithoutSetHead executes the block, runs the necessary verification
 // upon it and then persist the block and the associate state into the database.
 // The key difference between the InsertChain is it won't do the canonical chain
 // updating. It relies on the additional SetCanonical call to finalize the entire
 // procedure.
+// TODO: 새블록을 검증하고 DB에 저장, 단, 정식체인의 최신블록(head)로 설정하지는 않는 특수한 함수
 func (bc *BlockChain) InsertBlockWithoutSetHead(block *types.Block, makeWitness bool) (*stateless.Witness, error) {
 	if !bc.chainmu.TryLock() {
 		return nil, errChainStopped
@@ -2521,9 +2808,12 @@ func (bc *BlockChain) InsertBlockWithoutSetHead(block *types.Block, makeWitness 
 	return witness, err
 }
 
+
+
 // SetCanonical rewinds the chain to set the new head block as the specified
 // block. It's possible that the state of the new head is missing, and it will
 // be recovered in this function as well.
+// TODO: 지정된 블록을 정식체인의 새로운 최신블록(head)로 확정하는 최종단계의 함수 (이 과정에서 필요한 상태복구 + 체인 재구성을 모두 처리함)
 func (bc *BlockChain) SetCanonical(head *types.Block) (common.Hash, error) {
 	if !bc.chainmu.TryLock() {
 		return common.Hash{}, errChainStopped
@@ -2531,6 +2821,7 @@ func (bc *BlockChain) SetCanonical(head *types.Block) (common.Hash, error) {
 	defer bc.chainmu.Unlock()
 
 	// Re-execute the reorged chain in case the head state is missing.
+	// TODO: 새로운 head 블록에 해당하는 상태데이터다 디스크에 존재하는지 확인 => 없다면 상태복구 로직 실행
 	if !bc.HasState(head.Root()) {
 		if latestValidHash, err := bc.recoverAncestors(head, false); err != nil {
 			return latestValidHash, err
@@ -2538,12 +2829,15 @@ func (bc *BlockChain) SetCanonical(head *types.Block) (common.Hash, error) {
 		log.Info("Recovered head state", "number", head.Number(), "hash", head.Hash())
 	}
 	// Run the reorg if necessary and set the given block as new head.
+	// TODO: 체인 분기 여부 확인 => 분기가 감지되면 재구성 작업 수행
 	start := time.Now()
 	if head.ParentHash() != bc.CurrentBlock().Hash() {
 		if err := bc.reorg(bc.CurrentBlock(), head.Header()); err != nil {
 			return common.Hash{}, err
 		}
 	}
+	
+	// TODO: 최신블록 확정
 	bc.writeHeadBlock(head)
 
 	// Emit events
@@ -2567,8 +2861,13 @@ func (bc *BlockChain) SetCanonical(head *types.Block) (common.Hash, error) {
 	return head.Hash(), nil
 }
 
+
+
+
 // skipBlock returns 'true', if the block being imported can be skipped over, meaning
 // that the block does not need to be processed but can be considered already fully 'done'.
+// TODO: 블록을 삽입하는 과정에서 이미 DB에 존재하는 특정블록의 처리를 안전하게 건너 뛸 수 있는지 여부를 결정하는 함수
+// TODO: EX 채인 재구성과같은 일이 일어날 경우
 func (bc *BlockChain) skipBlock(err error, it *insertIterator) bool {
 	// We can only ever bypass processing if the only error returned by the validator
 	// is ErrKnownBlock, which means all checks passed, but we already have the block
@@ -2608,7 +2907,10 @@ func (bc *BlockChain) skipBlock(err error, it *insertIterator) bool {
 	return false
 }
 
+
+
 // reportBlock logs a bad block error.
+// TODO: 블록처리 또는 검증과정에서 에러가 발생한 불량블럭에 대한 정보를 기록학 로그를 남기는 함수
 func (bc *BlockChain) reportBlock(block *types.Block, res *ProcessResult, err error) {
 	var receipts types.Receipts
 	if res != nil {
@@ -2618,8 +2920,11 @@ func (bc *BlockChain) reportBlock(block *types.Block, res *ProcessResult, err er
 	log.Error(summarizeBadBlock(block, receipts, bc.Config(), err))
 }
 
+
+
 // logForkReadiness will write a log when a future fork is scheduled, but not
 // active. This is useful so operators know their client is ready for the fork.
+// TODO: 예정된 하드포크가 다가올때, 노드운영자에게 하드포크를 할 준비가 되었다는 안내를 주기적으로 출력하는 함수
 func (bc *BlockChain) logForkReadiness(block *types.Block) {
 	config := bc.Config()
 	current, last := config.LatestFork(block.Time()), config.LatestFork(math.MaxUint64)
@@ -2643,8 +2948,11 @@ func (bc *BlockChain) logForkReadiness(block *types.Block) {
 	}
 }
 
+
+
 // summarizeBadBlock returns a string summarizing the bad block and other
 // relevant information.
+// 유효성 검사에 실패한 블량블록에 대한 모든 관련 정보를 사람이 읽기 좋은 형식의 문자열로 요약하여 리턴하는 함수
 func summarizeBadBlock(block *types.Block, receipts []*types.Receipt, config *params.ChainConfig, err error) string {
 	var receiptString string
 	for i, receipt := range receipts {
@@ -2668,9 +2976,12 @@ Receipts: %v
 `, block.Number(), block.Hash(), err, platform, vcs, config, receiptString)
 }
 
+
+
 // InsertHeaderChain attempts to insert the given header chain in to the local
 // chain, possibly creating a reorg. If an error is returned, it will return the
 // index number of the failing header as well an error describing what went wrong.
+// TODO: 외부에서 받은 블록헤더 묶음을 검증한뒤, 로컬 헤더 체인에 삽입하는 함수 *필요하다면 체인 재구성도 수행
 func (bc *BlockChain) InsertHeaderChain(chain []*types.Header) (int, error) {
 	if len(chain) == 0 {
 		return 0, nil
@@ -2688,9 +2999,12 @@ func (bc *BlockChain) InsertHeaderChain(chain []*types.Header) (int, error) {
 	return 0, err
 }
 
+
+
 // InsertHeadersBeforeCutoff inserts the given headers into the ancient store
 // as they are claimed older than the configured chain cutoff point. All the
 // inserted headers are regarded as canonical and chain reorg is not supported.
+// TODO: 오래된 블록 헤더묶음을 freezer에 직접 기록하는 특정 목적의 함수 (주로 동기화 과정에서 대량의 과거 헤더 데이터를 효율적으로 저장하기 위해 사용)
 func (bc *BlockChain) InsertHeadersBeforeCutoff(headers []*types.Header) (int, error) {
 	if len(headers) == 0 {
 		return 0, nil
@@ -2757,6 +3071,7 @@ func (bc *BlockChain) InsertHeadersBeforeCutoff(headers []*types.Header) (int, e
 	return 0, nil
 }
 
+
 // SetBlockValidatorAndProcessorForTesting sets the current validator and processor.
 // This method can be used to force an invalid blockchain to be verified for tests.
 // This method is unsafe and should only be used before block import starts.
@@ -2776,3 +3091,4 @@ func (bc *BlockChain) SetTrieFlushInterval(interval time.Duration) {
 func (bc *BlockChain) GetTrieFlushInterval() time.Duration {
 	return time.Duration(bc.flushInterval.Load())
 }
+
